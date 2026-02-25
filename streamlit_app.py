@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import plotly.graph_objects as go
 import time
 import html
+from gas_storage import render_gas_storage_tab
 
 # Page configuration - NO SIDEBAR
 st.set_page_config(
@@ -1105,7 +1106,7 @@ def main():
     # NATIONAL GAS TAB - LOADS IMMEDIATELY (FASTEST)
     # ========================================================================
     with tab_gas:
-        ng_view = st.radio("Select View", ["Flow Table", "Supply Charts", "Demand Charts"], horizontal=True, key="ng_view", label_visibility="collapsed")
+        ng_view = st.radio("Select View", ["Flow Table", "Supply Charts", "Demand Charts", "Gas Storage"], horizontal=True, key="ng_view", label_visibility="collapsed")
         
         # Load National Gas data (fast - only 2 API calls)
         demand_df = get_gas_data("demandCategoryGraph")
@@ -1175,6 +1176,9 @@ def main():
                     if fig:
                         render_metric_cards([("Average Flow", avg, "mcm"), ("Total So Far", total, "mcm"), ("Current Flow", current, "mcm")])
                         st.plotly_chart(fig, use_container_width=True, theme=None)
+    
+            elif ng_view == "Gas Storage":
+                render_gas_storage_tab()
         else:
             st.error("⚠️ Unable to fetch National Gas data. Please try refreshing.")
     
