@@ -1,16 +1,3 @@
-"""
-gas_storage.py
---------------
-Gas Storage functions for the UK Energy Market Streamlit Dashboard.
-Add this as a sub-view under the National Gas tab.
-
-Integration:
-  1. Copy this file alongside your main dashboard script
-  2. Add `from gas_storage import render_gas_storage_tab` at the top
-  3. In the National Gas tab, add "Gas Storage" to the radio options
-  4. Call render_gas_storage_tab() when that view is selected
-"""
-
 import requests
 import pandas as pd
 import numpy as np
@@ -38,7 +25,6 @@ FACILITIES = [
 
 EXCLUDE_SITES = ['holehouse', 'avonmouth']
 
-
 def match_facility(site_name: str) -> str | None:
     s = site_name.lower()
     if 'humbly' in s:    return 'Humbly Grove'
@@ -49,9 +35,6 @@ def match_facility(site_name: str) -> str | None:
     if 'hornsea' in s or 'atwick' in s: return 'Hornsea'
     if 'rough' in s:     return 'Rough'
     return None
-
-
-# ── Data loading ────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=86400)  # Cache for 24 hours — data updates daily
 def load_storage_data() -> dict:
@@ -85,7 +68,6 @@ def load_storage_data() -> dict:
 
         return data
 
-    # No JSON file — fetch from API (last 5 years)
     data = fetch_from_api(date.today() - timedelta(days=1826), date.today())
     return data if data else {f["name"]: {} for f in FACILITIES}
 
@@ -144,9 +126,6 @@ def fetch_from_api(from_date: date, to_date: date) -> dict | None:
 
     return all_data if total_new > 0 else None
 
-
-# ── Calculations ────────────────────────────────────────────────────────────
-
 def calculate_bounds(data: dict) -> dict:
     """Calculate 5-year min/max bounds from latest date."""
     latest = max((d for fac in data.values() for d in fac.keys()), default='2020-01-01')
@@ -182,9 +161,6 @@ def get_chart_data(data: dict, from_date: str, to_date: str) -> tuple:
         series[name] = [data.get(name, {}).get(dt) for dt in dates]
 
     return dates, series
-
-
-# ── Plotly charts ───────────────────────────────────────────────────────────
 
 def create_stacked_area_chart(dates, series, bounds, chart_type="stock"):
     """Create a stacked area chart for stock or space."""
@@ -241,11 +217,7 @@ def create_stacked_area_chart(dates, series, bounds, chart_type="stock"):
 
     return fig
 
-
-# ── Main render function ───────────────────────────────────────────────────
-
 def render_gas_storage_tab():
-    """Render the Gas Storage sub-view. Call this from the main dashboard."""
 
     st.markdown(
         '<div class="section-header">UK Gas Storage — Stock & Space</div>',
