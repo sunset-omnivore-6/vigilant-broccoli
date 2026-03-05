@@ -1002,7 +1002,26 @@ STORAGE_CATEGORIES = [
 # ── Terminal sub-terminal breakdown for Terminals tab ──
 KWH_MCM = 10_972_000  # kWh to mcm conversion factor
 
-NOM_PUBOBJ_IDS = "PUBOBJ1107,PUBOBJ1108,PUBOBJ1109,PUBOBJ1105,PUBOBJ1110,PUBOBJ1111,PUBOBJ1113,PUBOBJ1114,PUBOBJ1116,PUBOBJ2071,PUBOBJ1676,PUBOBJ1120,PUBOBJ1122,PUBOBJ1121,PUBOBJ1123,PUBOBJ1124,PUBOBJ1125"
+NOM_PUBOBJ_IDS = (
+    "PUBOBJ1107,PUBOBJ1108,PUBOBJ1109,PUBOBJ1105,PUBOBJ1110,PUBOBJ1111,"
+    "PUBOBJ1113,PUBOBJ1114,PUBOBJ1116,PUBOBJ2071,PUBOBJ1676,"
+    "PUBOBJ1120,PUBOBJ1122,PUBOBJ1121,PUBOBJ1123,PUBOBJ1124,PUBOBJ1125,"
+    "PUBOBJ1112,PUBOBJ1117,PUBOBJ1118,PUBOBJ1119,PUBOBJ1141"
+)
+
+LNG_SUBTERMINALS = {
+    "South Hook": [
+        {"name": "South Hook", "flow_col": "MILFORD HAVEN - SOUTH HOOK", "nom_name": "SouthHook", "color": "#F59E0B"},
+    ],
+    "Dragon": [
+        {"name": "Dragon", "flow_col": "MILFORD HAVEN - DRAGON", "nom_name": "Dragon", "color": "#EF4444"},
+    ],
+    "Grain": [
+        {"name": "Grain 1", "flow_col": "GRAIN NTS 1", "nom_name": "GrainNTS1", "color": "#60A5FA"},
+        {"name": "Grain 2", "flow_col": "GRAIN NTS 2", "nom_name": "GrainNTS2", "color": "#93C5FD"},
+        {"name": "Boil Off", "flow_col": None, "nom_name": "IsleOfGrainBL", "color": "#7A8599"},
+    ],
+}
 
 TERMINAL_SUBTERMINALS = {
     "Easington": [
@@ -1029,6 +1048,9 @@ TERMINAL_SUBTERMINALS = {
 # Map nomination name (from CSV "Data Item" field) → flow column
 NOM_TO_FLOW = {}
 for subs in TERMINAL_SUBTERMINALS.values():
+    for s in subs:
+        NOM_TO_FLOW[s["nom_name"]] = s["flow_col"]
+for subs in LNG_SUBTERMINALS.values():
     for s in subs:
         NOM_TO_FLOW[s["nom_name"]] = s["flow_col"]
 
@@ -1615,17 +1637,180 @@ def main():
 
     # ── LNG VESSELS TAB ──
     with tab_lng:
-        st.markdown('<div class="section-header">LNG Vessels - Milford Haven Port</div>', unsafe_allow_html=True)
-        st.markdown('<div class="info-box"><strong>LNG Vessel Tracking</strong> \u2014 Shows confirmed LNG tankers arriving at Milford Haven.</div>', unsafe_allow_html=True)
-        with st.spinner("Loading vessel data..."):
-            lng_df = get_lng_vessels()
-        if lng_df is not None and len(lng_df) > 0:
-            st.metric("LNG Vessels Expected", len(lng_df))
-            st.markdown("---")
-            st.markdown("#### LNG Vessel Arrivals")
-            render_lng_vessel_table(lng_df)
+        lng_entry_df = get_entry_point_flows()
+        lng_gd_start = gas_day_start()
+        if lng_entry_df is not None and len(lng_entry_df) > 0:
+            lng_entry_df = lng_entry_df[lng_entry_df['Timestamp'] >= lng_gd_start].copy()
+
+            # Total LNG chart at top
+            if len(lng_entry_df) > 0:
+                fig_lng_total = create_stacked_flow_chart(lng_entry_df, LNG_CATEGORIES, "Total LNG Entry Flows", height=280, stacked=False)
+                st.plotly_chart(fig_lng_total, use_container_width=True, theme=None, key="lng_total")
+
+        # LNG sub-view selector
+        lng_view = st.radio(
+            "Select View", list(LNG_SUBTERMINALS.keys()) + ["Arriving Vessels"],
+            horizontal=True, key="lng_view", label_visibility="collapsed"
+        )
+
+        if lng_view == "Arriving Vessels":
+            st.markdown('<div style="color:#7A8599;font-size:0.85rem;margin-bottom:8px;"><strong>LNG Vessel Tracking</strong> — Confirmed LNG tankers arriving at Milford Haven.</div>', unsafe_allow_html=True)
+            with st.spinner("Loading vessel data..."):
+                lng_df = get_lng_vessels()
+            if lng_df is not None and len(lng_df) > 0:
+                st.metric("LNG Vessels Expected", len(lng_df))
+                render_lng_vessel_table(lng_df)
+            else:
+                st.markdown('<div class="no-data"><h3>No LNG Vessels Found</h3><p>No LNG tankers are currently scheduled to arrive.</p></div>', unsafe_allow_html=True)
+
+        elif lng_entry_df is not None and len(lng_entry_df) > 0:
+            subs = LNG_SUBTERMINALS[lng_view]
+
+            # Fetch nominations (shared cache with terminals)
+            lng_prevailing = get_prevailing_nominations()
+            lng_historic = get_historic_nominations()
+
+            lng_start = lng_gd_start
+            lng_end = lng_start + timedelta(days=1)
+            lng_now = uk_now().replace(tzinfo=None)
+            lng_elapsed = max(0, (lng_now - lng_start).total_seconds())
+            lng_remaining = max(0, 86400 - lng_elapsed)
+
+            for sub_idx, sub in enumerate(subs):
+                flow_col = sub["flow_col"]
+                has_flow = flow_col and flow_col in lng_entry_df.columns
+                flow_val = lng_entry_df[flow_col].iloc[-1] if has_flow else 0
+                nom_val = lng_prevailing.get(sub["nom_name"], 0)
+
+                # EoD at current rate
+                if has_flow and lng_elapsed > 0:
+                    avg_so_far = lng_entry_df[flow_col].fillna(0).mean()
+                    eod_current_rate = avg_so_far * (lng_elapsed / 86400) + flow_val * (lng_remaining / 86400)
+                else:
+                    eod_current_rate = 0
+
+                # Build chart
+                fig = go.Figure()
+                if has_flow:
+                    fig.add_trace(go.Scatter(
+                        x=lng_entry_df['Timestamp'], y=lng_entry_df[flow_col].fillna(0),
+                        mode='lines', line=dict(width=2, color=sub["color"]),
+                        name='Flow',
+                        hovertemplate='<b>Flow</b>: %{y:.1f} mcm<extra></extra>'
+                    ))
+
+                # Stepped nomination line from historic data
+                hist = lng_historic.get(sub["nom_name"], [])
+                if hist:
+                    nom_times = []
+                    nom_vals = []
+                    for i, (ts, val) in enumerate(hist):
+                        nom_times.append(ts)
+                        nom_vals.append(val)
+                        if i < len(hist) - 1:
+                            next_ts = hist[i + 1][0]
+                            nom_times.append(next_ts - timedelta(seconds=1))
+                            nom_vals.append(val)
+                    nom_times.append(lng_now)
+                    nom_vals.append(hist[-1][1])
+                    fig.add_trace(go.Scatter(
+                        x=nom_times, y=nom_vals,
+                        mode='lines', line=dict(width=1.5, color='#7A8599', dash='dash'),
+                        name='Nomination',
+                        hovertemplate='<b>Nom</b>: %{y:.1f} mcm<extra></extra>'
+                    ))
+                elif nom_val > 0.01:
+                    fig.add_hline(y=nom_val, line_dash="dash", line_color="#7A8599", line_width=1.5)
+
+                fig.add_vline(
+                    x=int(lng_now.timestamp() * 1000), line_color="#E2E8F0", line_width=1,
+                    annotation_text="<b>Now</b>", annotation_position="top",
+                    annotation=dict(font=dict(size=9, color='#E2E8F0'), bgcolor="#131825",
+                                    bordercolor="#252D44", borderwidth=1)
+                )
+                layout = get_chart_layout(f"<b>{sub['name']}</b>", 200)
+                layout['xaxis']['range'] = [lng_start, lng_end]
+                layout['xaxis']['tickformat'] = '%H:%M'
+                layout['yaxis']['title'] = dict(text='mcm', font=dict(color='#7A8599', size=10))
+                layout['showlegend'] = True
+                layout['legend'] = dict(orientation="h", yanchor="top", y=1.15, xanchor="right", x=1,
+                                        font=dict(size=9, color='#7A8599'), bgcolor='rgba(0,0,0,0)')
+                layout['margin'] = dict(l=50, r=20, t=30, b=25)
+                fig.update_layout(**layout)
+
+                # Chart + summary card side by side
+                col_chart, col_card = st.columns([4, 1])
+                with col_chart:
+                    st.plotly_chart(fig, use_container_width=True, theme=None, key=f"lng_sub_{sub_idx}")
+                with col_card:
+                    # Status
+                    if nom_val > 0.1:
+                        ratio = flow_val / nom_val
+                        if ratio > 1.10:
+                            status = '<span style="color:#60A5FA;">Above nom</span>'
+                        elif ratio < 0.90:
+                            status = '<span style="color:#F59E0B;">Below nom</span>'
+                        else:
+                            status = '<span style="color:#34D399;">On track</span>'
+                    else:
+                        status = '<span style="color:#7A8599;">No nom</span>'
+                    # Nom change indicator
+                    nom_change_html = ""
+                    if len(hist) >= 2:
+                        first_nom = hist[0][1]
+                        last_nom = hist[-1][1]
+                        delta = last_nom - first_nom
+                        if abs(delta) > 1.0:
+                            arrow = "\u2191" if delta > 0 else "\u2193"
+                            change_color = "#60A5FA" if delta > 0 else "#F59E0B"
+                            change_time = ""
+                            for ci in range(1, len(hist)):
+                                if abs(hist[ci][1] - hist[ci-1][1]) > 0.5:
+                                    change_time = hist[ci][0].strftime("%H:%M")
+                            nom_change_html = (
+                                f'<div style="color:{change_color};font-size:0.7rem;margin-top:3px;">'
+                                f'Nom {arrow}{abs(delta):.1f}'
+                                f'{" at " + change_time if change_time else ""}</div>'
+                            )
+                    # EoD color
+                    eod_color = "#34D399" if nom_val < 0.1 or abs(eod_current_rate - nom_val) / max(nom_val, 0.1) < 0.10 else ("#60A5FA" if eod_current_rate > nom_val else "#F59E0B")
+
+                    st.markdown(
+                        f'<div style="background:#131825;border:1px solid #252D44;border-left:4px solid {sub["color"]};'
+                        f'border-radius:0 8px 8px 0;padding:10px 12px;text-align:center;margin-top:10px;">'
+                        f'<div style="color:#E2E8F0;font-size:0.85rem;font-weight:600;margin-bottom:6px;">{sub["name"]}</div>'
+                        f'<div style="font-size:0.7rem;color:#7A8599;">Flow: <strong style="color:#E2E8F0;">{flow_val:.1f}</strong></div>'
+                        f'<div style="font-size:0.7rem;color:#7A8599;">Nom: <strong style="color:#E2E8F0;">{nom_val:.1f}</strong></div>'
+                        f'<div style="font-size:0.7rem;color:#7A8599;">EoD: <strong style="color:{eod_color};">{eod_current_rate:.1f}</strong></div>'
+                        f'<div style="font-size:0.7rem;margin-top:4px;">{status}</div>'
+                        f'{nom_change_html}'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+            # Boil Off card (Grain only — no flow data, nomination only)
+            if lng_view == "Grain":
+                boil_off_nom = lng_prevailing.get("IsleOfGrainBL", 0)
+                boil_off_hist = lng_historic.get("IsleOfGrainBL", [])
+                boil_off_change = ""
+                if len(boil_off_hist) >= 2:
+                    bo_delta = boil_off_hist[-1][1] - boil_off_hist[0][1]
+                    if abs(bo_delta) > 0.1:
+                        bo_arrow = "\u2191" if bo_delta > 0 else "\u2193"
+                        bo_color = "#60A5FA" if bo_delta > 0 else "#F59E0B"
+                        boil_off_change = f'<div style="color:{bo_color};font-size:0.7rem;margin-top:3px;">Nom {bo_arrow}{abs(bo_delta):.1f}</div>'
+                st.markdown(
+                    f'<div style="background:#131825;border:1px solid #252D44;border-left:4px solid #7A8599;'
+                    f'border-radius:0 8px 8px 0;padding:10px 14px;margin-top:8px;display:inline-block;">'
+                    f'<span style="color:#E2E8F0;font-size:0.85rem;font-weight:600;">Boil Off</span>'
+                    f'<span style="color:#7A8599;font-size:0.75rem;margin-left:12px;">Nom: <strong style="color:#E2E8F0;">{boil_off_nom:.1f}</strong> mcm</span>'
+                    f'{boil_off_change}'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
         else:
-            st.markdown('<div class="no-data"><h3>No LNG Vessels Found</h3><p>No LNG tankers are currently scheduled to arrive.</p></div>', unsafe_allow_html=True)
+            st.info("LNG flow data unavailable.")
 
 
 if __name__ == "__main__":
