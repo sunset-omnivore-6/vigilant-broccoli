@@ -1120,7 +1120,7 @@ def _parse_nom_name(parts):
 
 
 @st.cache_data(ttl=300)
-def get_prevailing_nominations():
+def get_prevailing_nominations(_nom_ids=NOM_PUBOBJ_IDS):
     """Fetch latest prevailing nominations for all sub-terminals. Returns dict {nom_name: mcm}."""
     try:
         df = _fetch_nominations_csv("Y")
@@ -1140,7 +1140,7 @@ def get_prevailing_nominations():
 
 
 @st.cache_data(ttl=300)
-def get_historic_nominations():
+def get_historic_nominations(_nom_ids=NOM_PUBOBJ_IDS):
     """Fetch all within-day nominations (hourly). Returns dict {nom_name: [(timestamp, mcm), ...]}."""
     try:
         df = _fetch_nominations_csv("N")
