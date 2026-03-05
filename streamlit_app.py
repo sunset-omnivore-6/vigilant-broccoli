@@ -797,8 +797,8 @@ def render_linepack_section(key_suffix=""):
         st.plotly_chart(fig, use_container_width=True, theme=None, key=f"linepack_chart{key_suffix}")
 
 
-def create_stacked_flow_chart(df, categories, chart_title, height=250, chart_key=None):
-    """Create a stacked area chart for multiple flow categories.
+def create_stacked_flow_chart(df, categories, chart_title, height=250, chart_key=None, stacked=True):
+    """Create a stacked area or multi-line chart for multiple flow categories.
 
     Args:
         df: DataFrame with Timestamp column + flow columns
@@ -806,6 +806,7 @@ def create_stacked_flow_chart(df, categories, chart_title, height=250, chart_key
         chart_title: str
         height: int
         chart_key: optional unique key for st.plotly_chart
+        stacked: if True, stacked area; if False, individual lines
     Returns:
         Plotly Figure
     """
@@ -820,13 +821,21 @@ def create_stacked_flow_chart(df, categories, chart_title, height=250, chart_key
         y = df[cols[0]].fillna(0).copy()
         for c in cols[1:]:
             y = y + df[c].fillna(0)
-        fig.add_trace(go.Scatter(
-            x=df['Timestamp'], y=y, mode='lines',
-            line=dict(width=0.5, color=cat["color"]),
-            fillcolor=cat["color"], stackgroup='one',
-            name=cat["name"],
-            hovertemplate=f'<b>{cat["name"]}</b>: %{{y:.1f}} mcm<extra></extra>'
-        ))
+        if stacked:
+            fig.add_trace(go.Scatter(
+                x=df['Timestamp'], y=y, mode='lines',
+                line=dict(width=0.5, color=cat["color"]),
+                fillcolor=cat["color"], stackgroup='one',
+                name=cat["name"],
+                hovertemplate=f'<b>{cat["name"]}</b>: %{{y:.1f}} mcm<extra></extra>'
+            ))
+        else:
+            fig.add_trace(go.Scatter(
+                x=df['Timestamp'], y=y, mode='lines',
+                line=dict(width=2, color=cat["color"]),
+                name=cat["name"],
+                hovertemplate=f'<b>{cat["name"]}</b>: %{{y:.1f}} mcm<extra></extra>'
+            ))
     fig.add_vline(
         x=int(now.timestamp() * 1000), line_color="#E2E8F0", line_width=1.5,
         annotation_text=f"<b>Now</b>", annotation_position="top",
@@ -970,29 +979,21 @@ DEMAND_CATEGORIES = [
 ]
 
 TERMINAL_CATEGORIES = [
-    {"name": "Easington Langeled", "columns": ["EASINGTON LANGELED"], "color": "#60A5FA"},
-    {"name": "Easington Dimlington", "columns": ["EASINGTON DIMLINGTON"], "color": "#93C5FD"},
-    {"name": "St Fergus Shell", "columns": ["ST FERGUS SHELL"], "color": "#A78BFA"},
-    {"name": "St Fergus NSMP", "columns": ["ST FERGUS NSMP"], "color": "#C4B5FD"},
-    {"name": "St Fergus Mobil", "columns": ["ST FERGUS MOBIL"], "color": "#DDD6FE"},
-    {"name": "Bacton Perenco", "columns": ["BACTON PERENCO"], "color": "#F472B6"},
-    {"name": "Bacton Seal", "columns": ["BACTON SEAL"], "color": "#F9A8D4"},
-    {"name": "Bacton Shell", "columns": ["BACTON SHELL"], "color": "#FBCFE8"},
-    {"name": "Teesside CATS", "columns": ["TEESSIDE CATS"], "color": "#FB923C"},
-    {"name": "Teesside PX", "columns": ["TEESSIDE PX"], "color": "#FDBA74"},
+    {"name": "Easington", "columns": ["EASINGTON LANGELED", "EASINGTON DIMLINGTON", "EASINGTON ROUGH ST"], "color": "#60A5FA"},
+    {"name": "St Fergus", "columns": ["ST FERGUS SHELL", "ST FERGUS NSMP", "ST FERGUS MOBIL"], "color": "#A78BFA"},
+    {"name": "Bacton", "columns": ["BACTON PERENCO", "BACTON SEAL", "BACTON SHELL"], "color": "#F472B6"},
+    {"name": "Teesside", "columns": ["TEESSIDE CATS", "TEESSIDE PX"], "color": "#FB923C"},
     {"name": "Theddlethorpe", "columns": ["THEDDLETHORPE"], "color": "#7A8599"},
 ]
 
 LNG_CATEGORIES = [
     {"name": "South Hook", "columns": ["MILFORD HAVEN - SOUTH HOOK"], "color": "#F59E0B"},
     {"name": "Dragon", "columns": ["MILFORD HAVEN - DRAGON"], "color": "#FBBF24"},
-    {"name": "Grain NTS 2", "columns": ["GRAIN NTS 2"], "color": "#60A5FA"},
-    {"name": "Grain NTS 1", "columns": ["GRAIN NTS 1"], "color": "#93C5FD"},
+    {"name": "Grain", "columns": ["GRAIN NTS 1", "GRAIN NTS 2"], "color": "#60A5FA"},
 ]
 
 STORAGE_CATEGORIES = [
     {"name": "Stublach", "columns": ["STUBLACH"], "color": "#3B82F6"},
-    {"name": "Rough", "columns": ["EASINGTON ROUGH ST"], "color": "#F59E0B"},
     {"name": "Aldbrough", "columns": ["ALDBROUGH"], "color": "#F472B6"},
     {"name": "Holford", "columns": ["HOLFORD"], "color": "#FB923C"},
     {"name": "Hornsea", "columns": ["HORNSEA"], "color": "#EF4444"},
@@ -1048,6 +1049,52 @@ def main():
         if dash_demand_df is not None and dash_supply_df is not None:
             dash_demand_df, dash_supply_df = prepare_gas_dataframes(dash_demand_df.copy(), dash_supply_df.copy())
 
+            # ── Key Metrics Strip ──
+            total_supply = dash_supply_df.iloc[-1][["Beach (UKCS/Norway)", "LNG", "Storage Withdrawal", "Bacton BBL Import", "Bacton INT Import"]].fillna(0).sum() if len(dash_supply_df) > 0 else 0
+            total_demand = dash_demand_df.iloc[-1][["LDZ Offtake", "Power Station", "Industrial", "Storage Injection", "Bacton BBL Export", "Bacton INT Export", "Moffat Export"]].fillna(0).sum() if len(dash_demand_df) > 0 else 0
+            net_balance = total_supply - total_demand
+            bal_color = "#34D399" if net_balance >= 0 else "#EF4444"
+            bal_sign = "+" if net_balance >= 0 else ""
+            # Fetch current wind (reuses Elexon cache)
+            today = uk_now().date()
+            wind_df = fetch_actual_wind_generation(today, today + timedelta(days=1))
+            wind_gw = (wind_df['wind_actual_mw'].iloc[-1] / 1000) if wind_df is not None and len(wind_df) > 0 else None
+            wind_str = f'{wind_gw:.1f} GW' if wind_gw is not None else 'N/A'
+            # Interconnector direction
+            bbl_imp = dash_supply_df['Bacton BBL Import'].iloc[-1] if 'Bacton BBL Import' in dash_supply_df.columns else 0
+            bbl_exp = dash_demand_df['Bacton BBL Export'].iloc[-1] if 'Bacton BBL Export' in dash_demand_df.columns else 0
+            int_imp = dash_supply_df['Bacton INT Import'].iloc[-1] if 'Bacton INT Import' in dash_supply_df.columns else 0
+            int_exp = dash_demand_df['Bacton INT Export'].iloc[-1] if 'Bacton INT Export' in dash_demand_df.columns else 0
+            bbl_net = bbl_imp - bbl_exp
+            int_net = int_imp - int_exp
+            def ic_label(net, name):
+                if abs(net) < 0.1:
+                    return f'<span style="color:#7A8599;">{name}: idle</span>'
+                arrow = "\u2192 Import" if net > 0 else "\u2190 Export"
+                color = "#60A5FA" if net > 0 else "#F59E0B"
+                return f'<span style="color:{color};">{name}: {arrow} {abs(net):.1f}</span>'
+
+            st.markdown(
+                f'<div style="display:flex;gap:12px;margin-bottom:8px;">'
+                f'<div style="flex:1;background:#131825;border:1px solid #252D44;border-radius:6px;padding:8px 12px;text-align:center;">'
+                f'<div style="color:#7A8599;font-size:0.65rem;text-transform:uppercase;">Total Supply</div>'
+                f'<div style="color:#60A5FA;font-size:1.2rem;font-weight:700;">{total_supply:.1f}</div></div>'
+                f'<div style="flex:1;background:#131825;border:1px solid #252D44;border-radius:6px;padding:8px 12px;text-align:center;">'
+                f'<div style="color:#7A8599;font-size:0.65rem;text-transform:uppercase;">Total Demand</div>'
+                f'<div style="color:#F59E0B;font-size:1.2rem;font-weight:700;">{total_demand:.1f}</div></div>'
+                f'<div style="flex:1;background:#131825;border:1px solid #252D44;border-radius:6px;padding:8px 12px;text-align:center;">'
+                f'<div style="color:#7A8599;font-size:0.65rem;text-transform:uppercase;">Net Balance</div>'
+                f'<div style="color:{bal_color};font-size:1.2rem;font-weight:700;">{bal_sign}{net_balance:.1f}</div></div>'
+                f'<div style="flex:1;background:#131825;border:1px solid #252D44;border-radius:6px;padding:8px 12px;text-align:center;">'
+                f'<div style="color:#7A8599;font-size:0.65rem;text-transform:uppercase;">Wind Gen</div>'
+                f'<div style="color:#34D399;font-size:1.2rem;font-weight:700;">{wind_str}</div></div>'
+                f'<div style="flex:1.5;background:#131825;border:1px solid #252D44;border-radius:6px;padding:8px 12px;text-align:center;">'
+                f'<div style="color:#7A8599;font-size:0.65rem;text-transform:uppercase;">Interconnectors</div>'
+                f'<div style="font-size:0.85rem;font-weight:600;margin-top:2px;">{ic_label(bbl_net, "BBL")} &middot; {ic_label(int_net, "IUK")}</div></div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
             # Supply & Demand stacked area charts side by side
             col_supply, col_demand = st.columns(2)
             with col_supply:
@@ -1068,12 +1115,12 @@ def main():
             entry_df = entry_df[entry_df['Timestamp'] >= gd_start].copy()
 
             if len(entry_df) > 0:
-                # Terminal flows
-                fig_terminals = create_stacked_flow_chart(entry_df, TERMINAL_CATEGORIES, "Terminal Entry Flows", height=280)
+                # Terminal flows (individual lines)
+                fig_terminals = create_stacked_flow_chart(entry_df, TERMINAL_CATEGORIES, "Terminal Entry Flows", height=280, stacked=False)
                 st.plotly_chart(fig_terminals, use_container_width=True, theme=None, key="dash_terminals")
 
-                # LNG flows
-                fig_lng = create_stacked_flow_chart(entry_df, LNG_CATEGORIES, "LNG Entry Flows", height=280)
+                # LNG flows (individual lines)
+                fig_lng = create_stacked_flow_chart(entry_df, LNG_CATEGORIES, "LNG Entry Flows", height=280, stacked=False)
                 st.plotly_chart(fig_lng, use_container_width=True, theme=None, key="dash_lng")
 
                 # Storage withdrawal — filter to only sites that have flowed
@@ -1097,7 +1144,7 @@ def main():
                         active_storage.append({"name": "Other (Hatfield/Humbly)", "columns": ["OTHER_STORAGE"], "color": "#7A8599"})
 
                 if active_storage:
-                    fig_storage = create_stacked_flow_chart(entry_df, active_storage, "Storage Withdrawal Flows", height=280)
+                    fig_storage = create_stacked_flow_chart(entry_df, active_storage, "Storage Withdrawal Flows", height=280, stacked=False)
                     st.plotly_chart(fig_storage, use_container_width=True, theme=None, key="dash_storage")
                 else:
                     st.markdown('<div style="color:#7A8599;text-align:center;padding:1rem;">No storage withdrawal currently flowing.</div>', unsafe_allow_html=True)
