@@ -1397,10 +1397,18 @@ def main():
                         annotation=dict(font=dict(size=9, color='#E2E8F0'), bgcolor="#131825",
                                         bordercolor="#252D44", borderwidth=1)
                     )
+                    # Y-axis: 0 to daily max + 10%
+                    y_max_vals = [nom_val]
+                    if has_flow:
+                        y_max_vals.append(term_entry_df[flow_col].fillna(0).max())
+                    if hist:
+                        y_max_vals.append(max(v for _, v in hist))
+                    y_top = max(y_max_vals) * 1.10 if max(y_max_vals) > 0 else 1
                     layout = get_chart_layout(f"<b>{sub['name']}</b>", 200)
                     layout['xaxis']['range'] = [start, end]
                     layout['xaxis']['tickformat'] = '%H:%M'
                     layout['yaxis']['title'] = dict(text='mcm', font=dict(color='#7A8599', size=10))
+                    layout['yaxis']['range'] = [0, y_top]
                     layout['showlegend'] = True
                     layout['legend'] = dict(orientation="h", yanchor="top", y=1.15, xanchor="right", x=1,
                                             font=dict(size=9, color='#7A8599'), bgcolor='rgba(0,0,0,0)')
@@ -1725,10 +1733,18 @@ def main():
                     annotation=dict(font=dict(size=9, color='#E2E8F0'), bgcolor="#131825",
                                     bordercolor="#252D44", borderwidth=1)
                 )
+                # Y-axis: 0 to daily max + 10%
+                y_max_vals = [nom_val]
+                if has_flow:
+                    y_max_vals.append(lng_entry_df[flow_col].fillna(0).max())
+                if hist:
+                    y_max_vals.append(max(v for _, v in hist))
+                y_top = max(y_max_vals) * 1.10 if max(y_max_vals) > 0 else 1
                 layout = get_chart_layout(f"<b>{sub['name']}</b>", 200)
                 layout['xaxis']['range'] = [lng_start, lng_end]
                 layout['xaxis']['tickformat'] = '%H:%M'
                 layout['yaxis']['title'] = dict(text='mcm', font=dict(color='#7A8599', size=10))
+                layout['yaxis']['range'] = [0, y_top]
                 layout['showlegend'] = True
                 layout['legend'] = dict(orientation="h", yanchor="top", y=1.15, xanchor="right", x=1,
                                         font=dict(size=9, color='#7A8599'), bgcolor='rgba(0,0,0,0)')
