@@ -1026,7 +1026,7 @@ NOM_PUBOBJ_IDS = (
     "PUBOBJ1120,PUBOBJ1122,PUBOBJ1121,PUBOBJ1123,PUBOBJ1124,PUBOBJ1125,"
     "PUBOBJ1112,PUBOBJ1135,PUBOBJ1117,PUBOBJ1118,PUBOBJ1119,PUBOBJ1141,"
     "PUBOBJ1126,PUBOBJ1094,PUBOBJ1106,PUBOBJ1597,PUBOBJ1596,PUBOBJ1093,"
-    "PUBOBJ1153,PUBOBJ1156"
+    "PUBOBJ1153,PUBOBJ1157"
 )
 
 LNG_SUBTERMINALS = {
@@ -1198,8 +1198,8 @@ def main():
             st.cache_data.clear()
             st.rerun()
 
-    tab_dash, tab_terminals, tab_lng, tab_ic, tab_demand, tab_gas, tab_elexon, tab_gassco = st.tabs([
-        "\U0001f4ca Dashboard", "\U0001f3ed Terminals", "\U0001f6a2 LNG", "\U0001f517 Interconnectors", "\U0001f4c9 Demand", "\U0001f525 Flows", "\u26a1 Electricity", "\U0001f527 GASSCO"
+    tab_dash, tab_terminals, tab_lng, tab_ic, tab_ccgt, tab_ldz, tab_elexon, tab_gassco = st.tabs([
+        "\U0001f4ca Dashboard", "\U0001f3ed Terminals", "\U0001f6a2 LNG", "\U0001f517 Interconnectors", "\U0001f525 CCGT", "\U0001f3e0 LDZ", "\u26a1 Electricity", "\U0001f527 GASSCO"
     ])
 
     # ── DASHBOARD TAB ──
@@ -1501,75 +1501,6 @@ def main():
                         )
         else:
             st.info("Terminal flow data unavailable.")
-
-    # ── NATIONAL GAS TAB ──
-    with tab_gas:
-        @st.fragment(run_every=_linepack_poll_interval())
-        def _linepack_fragment():
-            render_linepack_section(key_suffix="_gas")
-        _linepack_fragment()
-
-        ng_view = st.radio("Select View", ["Flow Table", "Supply Charts", "Demand Charts", "Gas Storage"], horizontal=True, key="ng_view", label_visibility="collapsed")
-
-        if ng_view == "Gas Storage":
-            render_gas_storage_tab()
-        else:
-            demand_df, supply_df = fetch_parallel(
-                (get_gas_data, ("demandCategoryGraph",)),
-                (get_gas_data, ("supplyCategoryGraph",)),
-            )
-            if demand_df is not None:
-                record_fetch("gas_demand")
-            if supply_df is not None:
-                record_fetch("gas_supply")
-            if demand_df is not None and supply_df is not None:
-                demand_df, supply_df = prepare_gas_dataframes(demand_df.copy(), supply_df.copy())
-
-                # Cache current data; roll over to "yesterday" at gas day boundary
-                current_gas_date = gas_day_start().date()
-                if st.session_state.get("_gas_data_date") != current_gas_date:
-                    # Gas day rolled over — save previous data as yesterday
-                    if "_current_demand_df" in st.session_state:
-                        st.session_state["_yesterday_demand_df"] = st.session_state["_current_demand_df"]
-                        st.session_state["_yesterday_supply_df"] = st.session_state["_current_supply_df"]
-                    st.session_state["_gas_data_date"] = current_gas_date
-                st.session_state["_current_demand_df"] = demand_df.copy()
-                st.session_state["_current_supply_df"] = supply_df.copy()
-                yesterday_demand = st.session_state.get("_yesterday_demand_df")
-                yesterday_supply = st.session_state.get("_yesterday_supply_df")
-
-                if ng_view == "Flow Table":
-                    st.markdown('<div class="section-header">UK Gas Flows - Supply, Demand & Balance</div>', unsafe_allow_html=True)
-                    st.markdown('<div class="info-box"><strong>Flow Table</strong> \u2014 Current gas day flows from National Gas. All values in mcm.</div>', unsafe_allow_html=True)
-                    render_nomination_table(demand_df, supply_df)
-                elif ng_view == "Supply Charts":
-                    supply_cat = st.radio("Supply Category", ["LNG", "Storage Withdrawal", "Beach Terminal", "IC Import"], horizontal=True, key="supply_cat", label_visibility="collapsed")
-                    st.markdown(f'<div class="section-header">Supply - {supply_cat}</div>', unsafe_allow_html=True)
-                    if supply_cat == "IC Import":
-                        supply_df['Total IC Import'] = supply_df['Bacton BBL Import'] + supply_df['Bacton INT Import']
-                        col_name = 'Total IC Import'
-                    else:
-                        col_name = {"LNG": "LNG", "Storage Withdrawal": "Storage Withdrawal", "Beach Terminal": "Beach (UKCS/Norway)"}.get(supply_cat)
-                    if col_name and col_name in supply_df.columns:
-                        fig, avg, total, current = create_flow_chart(supply_df, col_name, f'{supply_cat} Flow', '#60A5FA', yesterday_df=yesterday_supply)
-                        if fig:
-                            render_metric_cards([("Average Flow", avg, "mcm"), ("Total So Far", total, "mcm"), ("Current Flow", current, "mcm")])
-                            st.plotly_chart(fig, use_container_width=True, theme=None)
-                elif ng_view == "Demand Charts":
-                    demand_cat = st.radio("Demand Category", ["CCGT", "Storage Injection", "LDZ", "Industrial", "IC Export"], horizontal=True, key="demand_cat", label_visibility="collapsed")
-                    st.markdown(f'<div class="section-header">Demand - {demand_cat}</div>', unsafe_allow_html=True)
-                    if demand_cat == "IC Export":
-                        demand_df['Total IC Export'] = demand_df['Bacton BBL Export'] + demand_df['Bacton INT Export'] + demand_df['Moffat Export']
-                        col_name = 'Total IC Export'
-                    else:
-                        col_name = {"CCGT": "Power Station", "Storage Injection": "Storage Injection", "LDZ": "LDZ Offtake", "Industrial": "Industrial"}.get(demand_cat)
-                    if col_name and col_name in demand_df.columns:
-                        fig, avg, total, current = create_flow_chart(demand_df, col_name, f'{demand_cat} Flow', '#F59E0B', yesterday_df=yesterday_demand)
-                        if fig:
-                            render_metric_cards([("Average Flow", avg, "mcm"), ("Total So Far", total, "mcm"), ("Current Flow", current, "mcm")])
-                            st.plotly_chart(fig, use_container_width=True, theme=None)
-            else:
-                st.error("\u26a0\ufe0f Unable to fetch National Gas data. Please try refreshing.")
 
     # ── ELEXON TAB ──
     with tab_elexon:
@@ -2072,145 +2003,118 @@ def main():
         else:
             st.info("Interconnector flow data unavailable.")
 
-    # ── DEMAND TAB (CCGT / LDZ) ──
-    DEMAND_ITEMS = {
-        "CCGT": {"col": "Power Station", "nom_name": "NTS Powerstation Total", "color": "#EF4444", "title": "CCGT / Power Station Gas Demand"},
-        "LDZ": {"col": "LDZ Offtake", "nom_name": "Shrinkage (LDZ ) Total", "color": "#F59E0B", "title": "LDZ Offtake Gas Demand"},
-    }
-    with tab_demand:
-        dem_view = st.radio(
-            "Select Category", list(DEMAND_ITEMS.keys()),
-            horizontal=True, key="demand_view", label_visibility="collapsed"
-        )
-        dem_cfg = DEMAND_ITEMS[dem_view]
-        dem_df = get_gas_data("demandCategoryGraph")
-        dem_gd_start = gas_day_start()
-
-        if dem_df is not None:
-            dem_df = dem_df.copy()
-            dem_df['Timestamp'] = pd.to_datetime(dem_df['dateTime'], unit='ms')
-            dem_df['interval_seconds'] = dem_df['Timestamp'].diff().dt.total_seconds().fillna(120)
-            dem_col = dem_cfg["col"]
-
-            if dem_col in dem_df.columns:
-                dem_now = uk_now().replace(tzinfo=None)
-                dem_end = dem_gd_start + timedelta(days=1)
-                dem_elapsed = max(0, (dem_now - dem_gd_start).total_seconds())
-                dem_remaining = max(0, 86400 - dem_elapsed)
-
-                dem_flow = dem_df[dem_col].iloc[-1]
-                dem_avg = dem_df[dem_col].fillna(0).mean()
-                dem_eod = dem_avg * (dem_elapsed / 86400) + dem_flow * (dem_remaining / 86400) if dem_elapsed > 0 else 0
-
-                # Nominations
-                dem_prevailing = get_prevailing_nominations()
-                dem_historic = get_historic_nominations()
-                dem_nom = dem_prevailing.get(dem_cfg["nom_name"], 0)
-                dem_hist = dem_historic.get(dem_cfg["nom_name"], [])
-
-                # Build chart
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=dem_df['Timestamp'], y=dem_df[dem_col].fillna(0),
-                    mode='lines', line=dict(width=2, color=dem_cfg["color"]),
-                    name=f'{dem_view} Flow',
-                    hovertemplate='<b>Flow</b>: %{y:.1f} mcm<extra></extra>'
-                ))
-
-                # Stepped nomination line
-                if dem_hist:
-                    nom_times = []
-                    nom_vals = []
-                    for i, (ts, val) in enumerate(dem_hist):
-                        nom_times.append(ts)
-                        nom_vals.append(val)
-                        if i < len(dem_hist) - 1:
-                            nom_times.append(dem_hist[i + 1][0] - timedelta(seconds=1))
-                            nom_vals.append(val)
-                    nom_times.append(dem_now)
-                    nom_vals.append(dem_hist[-1][1])
+    # ── Demand category chart helper ──
+    def _render_demand_tab(tab_container, label, col_name, nom_name, color, title, chart_key):
+        with tab_container:
+            dem_df = get_gas_data("demandCategoryGraph")
+            dem_gd_start = gas_day_start()
+            if dem_df is not None:
+                dem_df = dem_df.copy()
+                dem_df['Timestamp'] = pd.to_datetime(dem_df['dateTime'], unit='ms')
+                if col_name in dem_df.columns:
+                    dem_now = uk_now().replace(tzinfo=None)
+                    dem_end = dem_gd_start + timedelta(days=1)
+                    dem_elapsed = max(0, (dem_now - dem_gd_start).total_seconds())
+                    dem_remaining = max(0, 86400 - dem_elapsed)
+                    dem_flow = dem_df[col_name].iloc[-1]
+                    dem_avg = dem_df[col_name].fillna(0).mean()
+                    dem_eod = dem_avg * (dem_elapsed / 86400) + dem_flow * (dem_remaining / 86400) if dem_elapsed > 0 else 0
+                    dem_prevailing = get_prevailing_nominations()
+                    dem_historic = get_historic_nominations()
+                    dem_nom = dem_prevailing.get(nom_name, 0)
+                    dem_hist = dem_historic.get(nom_name, [])
+                    fig = go.Figure()
                     fig.add_trace(go.Scatter(
-                        x=nom_times, y=nom_vals,
-                        mode='lines', line=dict(width=1.5, color='#7A8599', dash='dash'),
-                        name='Nomination',
-                        hovertemplate='<b>Nom</b>: %{y:.1f} mcm<extra></extra>'
+                        x=dem_df['Timestamp'], y=dem_df[col_name].fillna(0),
+                        mode='lines', line=dict(width=2, color=color),
+                        name=f'{label} Flow',
+                        hovertemplate='<b>Flow</b>: %{y:.1f} mcm<extra></extra>'
                     ))
-                elif dem_nom > 0.01:
-                    fig.add_hline(y=dem_nom, line_dash="dash", line_color="#7A8599", line_width=1.5)
-
-                fig.add_vline(
-                    x=int(dem_now.timestamp() * 1000), line_color="#E2E8F0", line_width=1,
-                    annotation_text="<b>Now</b>", annotation_position="top",
-                    annotation=dict(font=dict(size=9, color='#E2E8F0'), bgcolor="#131825",
-                                    bordercolor="#252D44", borderwidth=1)
-                )
-
-                # Y-axis: 0 to max + 10%
-                y_max_vals = [dem_df[dem_col].fillna(0).max(), dem_nom]
-                if dem_hist:
-                    y_max_vals.append(max(v for _, v in dem_hist))
-                y_top = max(y_max_vals) * 1.10 if max(y_max_vals) > 0 else 1
-                layout = get_chart_layout(f"<b>{dem_cfg['title']}</b>", 300)
-                layout['xaxis']['range'] = [dem_gd_start, dem_end]
-                layout['xaxis']['tickformat'] = '%H:%M'
-                layout['yaxis']['title'] = dict(text='Flow Rate (mcm)', font=dict(color='#7A8599'))
-                layout['yaxis']['range'] = [0, y_top]
-                layout['showlegend'] = True
-                layout['legend'] = dict(orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5,
-                                        font=dict(size=10, color='#7A8599'), bgcolor='rgba(0,0,0,0)')
-                layout['margin'] = dict(l=50, r=20, t=35, b=60)
-                fig.update_layout(**layout)
-
-                # Chart + card side by side
-                col_chart, col_card = st.columns([4, 1])
-                with col_chart:
-                    st.plotly_chart(fig, use_container_width=True, theme=None, key=f"dem_{dem_view}_chart")
-                with col_card:
-                    # Status
-                    if dem_nom > 0.1:
-                        ratio = dem_flow / dem_nom
-                        if ratio > 1.10:
-                            status = '<span style="color:#60A5FA;">Above nom</span>'
-                        elif ratio < 0.90:
-                            status = '<span style="color:#F59E0B;">Below nom</span>'
-                        else:
-                            status = '<span style="color:#34D399;">On track</span>'
-                    else:
-                        status = '<span style="color:#7A8599;">No nom</span>'
-                    # Nom change
-                    nom_change_html = ""
-                    if len(dem_hist) >= 2:
-                        delta = dem_hist[-1][1] - dem_hist[0][1]
-                        if abs(delta) > 1.0:
-                            arrow = "\u2191" if delta > 0 else "\u2193"
-                            change_color = "#60A5FA" if delta > 0 else "#F59E0B"
-                            change_time = ""
-                            for ci in range(1, len(dem_hist)):
-                                if abs(dem_hist[ci][1] - dem_hist[ci-1][1]) > 0.5:
-                                    change_time = dem_hist[ci][0].strftime("%H:%M")
-                            nom_change_html = (
-                                f'<div style="color:{change_color};font-size:0.7rem;margin-top:3px;">'
-                                f'Nom {arrow}{abs(delta):.1f}'
-                                f'{" at " + change_time if change_time else ""}</div>'
-                            )
-                    eod_color = "#34D399" if dem_nom < 0.1 or abs(dem_eod - dem_nom) / max(dem_nom, 0.1) < 0.10 else ("#60A5FA" if dem_eod > dem_nom else "#F59E0B")
-
-                    st.markdown(
-                        f'<div style="background:#131825;border:1px solid #252D44;border-left:4px solid {dem_cfg["color"]};'
-                        f'border-radius:0 8px 8px 0;padding:10px 12px;text-align:center;margin-top:10px;">'
-                        f'<div style="color:#E2E8F0;font-size:0.85rem;font-weight:600;margin-bottom:6px;">{dem_view}</div>'
-                        f'<div style="font-size:0.7rem;color:#7A8599;">Flow: <strong style="color:#E2E8F0;">{dem_flow:.1f}</strong></div>'
-                        f'<div style="font-size:0.7rem;color:#7A8599;">Nom: <strong style="color:#E2E8F0;">{dem_nom:.1f}</strong></div>'
-                        f'<div style="font-size:0.7rem;color:#7A8599;">EoD: <strong style="color:{eod_color};">{dem_eod:.1f}</strong></div>'
-                        f'<div style="font-size:0.7rem;margin-top:4px;">{status}</div>'
-                        f'{nom_change_html}'
-                        f'</div>',
-                        unsafe_allow_html=True
+                    if dem_hist:
+                        nom_times, nom_vals = [], []
+                        for i, (ts, val) in enumerate(dem_hist):
+                            nom_times.append(ts)
+                            nom_vals.append(val)
+                            if i < len(dem_hist) - 1:
+                                nom_times.append(dem_hist[i + 1][0] - timedelta(seconds=1))
+                                nom_vals.append(val)
+                        nom_times.append(dem_now)
+                        nom_vals.append(dem_hist[-1][1])
+                        fig.add_trace(go.Scatter(
+                            x=nom_times, y=nom_vals,
+                            mode='lines', line=dict(width=1.5, color='#7A8599', dash='dash'),
+                            name='Nomination',
+                            hovertemplate='<b>Nom</b>: %{y:.1f} mcm<extra></extra>'
+                        ))
+                    elif dem_nom > 0.01:
+                        fig.add_hline(y=dem_nom, line_dash="dash", line_color="#7A8599", line_width=1.5)
+                    fig.add_vline(
+                        x=int(dem_now.timestamp() * 1000), line_color="#E2E8F0", line_width=1,
+                        annotation_text="<b>Now</b>", annotation_position="top",
+                        annotation=dict(font=dict(size=9, color='#E2E8F0'), bgcolor="#131825",
+                                        bordercolor="#252D44", borderwidth=1)
                     )
+                    y_max_vals = [dem_df[col_name].fillna(0).max(), dem_nom]
+                    if dem_hist:
+                        y_max_vals.append(max(v for _, v in dem_hist))
+                    y_top = max(y_max_vals) * 1.10 if max(y_max_vals) > 0 else 1
+                    layout = get_chart_layout(f"<b>{title}</b>", 300)
+                    layout['xaxis']['range'] = [dem_gd_start, dem_end]
+                    layout['xaxis']['tickformat'] = '%H:%M'
+                    layout['yaxis']['title'] = dict(text='Flow Rate (mcm)', font=dict(color='#7A8599'))
+                    layout['yaxis']['range'] = [0, y_top]
+                    layout['showlegend'] = True
+                    layout['legend'] = dict(orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5,
+                                            font=dict(size=10, color='#7A8599'), bgcolor='rgba(0,0,0,0)')
+                    layout['margin'] = dict(l=50, r=20, t=35, b=60)
+                    fig.update_layout(**layout)
+                    col_chart, col_card = st.columns([4, 1])
+                    with col_chart:
+                        st.plotly_chart(fig, use_container_width=True, theme=None, key=chart_key)
+                    with col_card:
+                        if dem_nom > 0.1:
+                            ratio = dem_flow / dem_nom
+                            status = '<span style="color:#60A5FA;">Above nom</span>' if ratio > 1.10 else ('<span style="color:#F59E0B;">Below nom</span>' if ratio < 0.90 else '<span style="color:#34D399;">On track</span>')
+                        else:
+                            status = '<span style="color:#7A8599;">No nom</span>'
+                        nom_change_html = ""
+                        if len(dem_hist) >= 2:
+                            delta = dem_hist[-1][1] - dem_hist[0][1]
+                            if abs(delta) > 1.0:
+                                arrow = "\u2191" if delta > 0 else "\u2193"
+                                change_color = "#60A5FA" if delta > 0 else "#F59E0B"
+                                change_time = ""
+                                for ci in range(1, len(dem_hist)):
+                                    if abs(dem_hist[ci][1] - dem_hist[ci-1][1]) > 0.5:
+                                        change_time = dem_hist[ci][0].strftime("%H:%M")
+                                nom_change_html = (
+                                    f'<div style="color:{change_color};font-size:0.7rem;margin-top:3px;">'
+                                    f'Nom {arrow}{abs(delta):.1f}'
+                                    f'{" at " + change_time if change_time else ""}</div>'
+                                )
+                        eod_color = "#34D399" if dem_nom < 0.1 or abs(dem_eod - dem_nom) / max(dem_nom, 0.1) < 0.10 else ("#60A5FA" if dem_eod > dem_nom else "#F59E0B")
+                        st.markdown(
+                            f'<div style="background:#131825;border:1px solid #252D44;border-left:4px solid {color};'
+                            f'border-radius:0 8px 8px 0;padding:10px 12px;text-align:center;margin-top:10px;">'
+                            f'<div style="color:#E2E8F0;font-size:0.85rem;font-weight:600;margin-bottom:6px;">{label}</div>'
+                            f'<div style="font-size:0.7rem;color:#7A8599;">Flow: <strong style="color:#E2E8F0;">{dem_flow:.1f}</strong></div>'
+                            f'<div style="font-size:0.7rem;color:#7A8599;">Nom: <strong style="color:#E2E8F0;">{dem_nom:.1f}</strong></div>'
+                            f'<div style="font-size:0.7rem;color:#7A8599;">EoD: <strong style="color:{eod_color};">{dem_eod:.1f}</strong></div>'
+                            f'<div style="font-size:0.7rem;margin-top:4px;">{status}</div>'
+                            f'{nom_change_html}'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                else:
+                    st.info(f"{label} flow data not found.")
             else:
-                st.info(f"{dem_view} flow data not found in demand categories.")
-        else:
-            st.info("Demand data unavailable.")
+                st.info(f"{label} data unavailable.")
+
+    # ── CCGT TAB ──
+    _render_demand_tab(tab_ccgt, "CCGT", "Power Station", "NTS Powerstation Total", "#EF4444", "CCGT / Power Station Gas Demand", "ccgt_chart")
+
+    # ── LDZ TAB ──
+    _render_demand_tab(tab_ldz, "LDZ", "LDZ Offtake", "LDZ Direct Total", "#F59E0B", "LDZ Offtake Gas Demand", "ldz_chart")
 
 
 if __name__ == "__main__":
