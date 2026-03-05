@@ -1092,14 +1092,14 @@ for subs in LNG_SUBTERMINALS.values():
 
 # ── Nomination fetch functions ──
 
-def _fetch_nominations_csv(latest_flag):
+def _fetch_nominations_csv(latest_flag, nom_ids):
     """Shared helper: fetch nominations CSV. latest_flag='Y' for prevailing, 'N' for historic."""
     today = uk_now().strftime("%Y-%m-%d")
     url = "https://data.nationalgas.com/api/find-gas-data-download"
     params = {
         "applicableFor": "Y", "dateFrom": today, "dateTo": today,
         "dateType": "GASDAY", "latestFlag": latest_flag,
-        "ids": NOM_PUBOBJ_IDS, "type": "CSV"
+        "ids": nom_ids, "type": "CSV"
     }
     response = requests.get(url, params=params, timeout=15)
     response.raise_for_status()
@@ -1120,10 +1120,10 @@ def _parse_nom_name(parts):
 
 
 @st.cache_data(ttl=300)
-def get_prevailing_nominations(_nom_ids=NOM_PUBOBJ_IDS):
+def get_prevailing_nominations(nom_ids=NOM_PUBOBJ_IDS):
     """Fetch latest prevailing nominations for all sub-terminals. Returns dict {nom_name: mcm}."""
     try:
-        df = _fetch_nominations_csv("Y")
+        df = _fetch_nominations_csv("Y", nom_ids)
         result = {}
         for _, row in df.iterrows():
             data_item = str(row.get("Data Item", ""))
@@ -1140,10 +1140,10 @@ def get_prevailing_nominations(_nom_ids=NOM_PUBOBJ_IDS):
 
 
 @st.cache_data(ttl=300)
-def get_historic_nominations(_nom_ids=NOM_PUBOBJ_IDS):
+def get_historic_nominations(nom_ids=NOM_PUBOBJ_IDS):
     """Fetch all within-day nominations (hourly). Returns dict {nom_name: [(timestamp, mcm), ...]}."""
     try:
-        df = _fetch_nominations_csv("N")
+        df = _fetch_nominations_csv("N", nom_ids)
         result = {}
         for _, row in df.iterrows():
             data_item = str(row.get("Data Item", ""))
