@@ -1006,7 +1006,7 @@ NOM_PUBOBJ_IDS = (
     "PUBOBJ1107,PUBOBJ1108,PUBOBJ1109,PUBOBJ1105,PUBOBJ1110,PUBOBJ1111,"
     "PUBOBJ1113,PUBOBJ1114,PUBOBJ1116,PUBOBJ2071,PUBOBJ1676,"
     "PUBOBJ1120,PUBOBJ1122,PUBOBJ1121,PUBOBJ1123,PUBOBJ1124,PUBOBJ1125,"
-    "PUBOBJ1112,PUBOBJ1117,PUBOBJ1118,PUBOBJ1119,PUBOBJ1141"
+    "PUBOBJ1112,PUBOBJ1135,PUBOBJ1117,PUBOBJ1118,PUBOBJ1119,PUBOBJ1141"
 )
 
 LNG_SUBTERMINALS = {
@@ -1057,21 +1057,26 @@ for subs in LNG_SUBTERMINALS.values():
 
 # ── Nomination fetch functions ──
 
-@st.cache_data(ttl=300)
-def get_prevailing_nominations():
-    """Fetch latest prevailing nominations for all sub-terminals. Returns dict {nom_name: mcm}."""
+def _fetch_nominations_csv(latest_flag):
+    """Shared helper: fetch nominations CSV. latest_flag='Y' for prevailing, 'N' for historic."""
     today = uk_now().strftime("%Y-%m-%d")
     url = "https://data.nationalgas.com/api/find-gas-data-download"
     params = {
         "applicableFor": "Y", "dateFrom": today, "dateTo": today,
-        "dateType": "GASDAY", "latestFlag": "Y",
+        "dateType": "GASDAY", "latestFlag": latest_flag,
         "ids": NOM_PUBOBJ_IDS, "type": "CSV"
     }
+    response = requests.get(url, params=params, timeout=15)
+    response.raise_for_status()
+    import io
+    return pd.read_csv(io.StringIO(response.text))
+
+
+@st.cache_data(ttl=300)
+def get_prevailing_nominations():
+    """Fetch latest prevailing nominations for all sub-terminals. Returns dict {nom_name: mcm}."""
     try:
-        response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()
-        import io
-        df = pd.read_csv(io.StringIO(response.text))
+        df = _fetch_nominations_csv("Y")
         result = {}
         for _, row in df.iterrows():
             data_item = str(row.get("Data Item", ""))
@@ -1080,6 +1085,7 @@ def get_prevailing_nominations():
                 nom_name = parts[2]
                 value_kwh = float(row.get("Value", 0))
                 result[nom_name] = value_kwh / KWH_MCM
+        logger.info("Prevailing nominations fetched: %d entries — keys: %s", len(result), list(result.keys()))
         return result
     except (requests.RequestException, KeyError, ValueError) as e:
         logger.warning("Failed to fetch prevailing nominations: %s", e)
@@ -1089,18 +1095,8 @@ def get_prevailing_nominations():
 @st.cache_data(ttl=300)
 def get_historic_nominations():
     """Fetch all within-day nominations (hourly). Returns dict {nom_name: [(timestamp, mcm), ...]}."""
-    today = uk_now().strftime("%Y-%m-%d")
-    url = "https://data.nationalgas.com/api/find-gas-data-download"
-    params = {
-        "applicableFor": "Y", "dateFrom": today, "dateTo": today,
-        "dateType": "GASDAY", "latestFlag": "N",
-        "ids": NOM_PUBOBJ_IDS, "type": "CSV"
-    }
     try:
-        response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()
-        import io
-        df = pd.read_csv(io.StringIO(response.text))
+        df = _fetch_nominations_csv("N")
         result = {}
         for _, row in df.iterrows():
             data_item = str(row.get("Data Item", ""))
@@ -1119,6 +1115,7 @@ def get_historic_nominations():
         # Sort each list by timestamp
         for k in result:
             result[k].sort(key=lambda x: x[0])
+        logger.info("Historic nominations fetched: %d sub-terminals", len(result))
         return result
     except (requests.RequestException, KeyError, ValueError) as e:
         logger.warning("Failed to fetch historic nominations: %s", e)
