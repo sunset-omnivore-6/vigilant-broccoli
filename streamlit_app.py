@@ -843,11 +843,21 @@ def create_stacked_flow_chart(df, categories, chart_title, height=250, chart_key
                         bordercolor="#252D44", borderwidth=1)
     )
     # Y-axis: 0 to daily max + 10%
-    y_max = 0
-    for cat in categories:
-        cols = [c for c in cat["columns"] if c in df.columns]
-        if cols:
-            y_max = max(y_max, (df[cols].fillna(0).sum(axis=1)).max())
+    if stacked:
+        # Stacked: max is sum of all categories at each timestamp
+        total = pd.Series(0, index=df.index)
+        for cat in categories:
+            cols = [c for c in cat["columns"] if c in df.columns]
+            if cols:
+                total = total + df[cols].fillna(0).sum(axis=1)
+        y_max = total.max()
+    else:
+        # Lines: max is the highest individual category
+        y_max = 0
+        for cat in categories:
+            cols = [c for c in cat["columns"] if c in df.columns]
+            if cols:
+                y_max = max(y_max, (df[cols].fillna(0).sum(axis=1)).max())
     y_top = y_max * 1.10 if y_max > 0 else 1
     layout = get_chart_layout(f"<b>{chart_title}</b>", height)
     layout['xaxis']['range'] = [start, end]
