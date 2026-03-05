@@ -505,11 +505,19 @@ def create_gassco_cumulative_plot(df, title_prefix):
     return fig
 
 
+def gas_day_start():
+    now = datetime.now()
+    if now.hour < 5:
+        today = (now - timedelta(days=1)).date()
+    else:
+        today = now.date()
+    return datetime.combine(today, datetime.min.time().replace(hour=5))
+
+
 def create_flow_chart(df, column_name, chart_title, color='#60A5FA'):
     if column_name not in df.columns: return None, 0, 0, 0
     avg = np.average(df[column_name], weights=df['interval_seconds'])
-    today = datetime.now().date()
-    start = datetime.combine(today, datetime.min.time().replace(hour=5))
+    start = gas_day_start()
     end = start + timedelta(days=1)
     now = datetime.now()
     elapsed_pct = max(0, min(1, (now - start).total_seconds() / 86400))
@@ -628,8 +636,7 @@ def main():
                 if 'Storage' in demand_df.columns:
                     demand_df = demand_df.copy(); demand_df.rename(columns={'Storage': 'Storage Injection'}, inplace=True)
                 n = len(demand_df)
-                today = datetime.now().date()
-                start = datetime.combine(today, datetime.min.time().replace(hour=5))
+                start = gas_day_start()
                 ts = [start + timedelta(minutes=2*i) for i in range(n)]
                 demand_df = demand_df.copy(); demand_df['Timestamp'] = ts
                 demand_df = demand_df.sort_values('Timestamp').reset_index(drop=True)
@@ -732,13 +739,13 @@ def main():
                 forecast_wind = fetch_wind_forecast()
                 if len(forecast_wind) > 0:
                     forecast_wind = forecast_wind[forecast_wind['timestamp'].dt.date.isin([today, today + timedelta(days=1)])].copy()
-                gas_day_start = datetime.combine(today, datetime.min.time().replace(hour=5))
-                gas_day_end = datetime.combine(today + timedelta(days=1), datetime.min.time().replace(hour=5))
+                wind_day_start = datetime.combine(today, datetime.min.time().replace(hour=5))
+                wind_day_end = datetime.combine(today + timedelta(days=1), datetime.min.time().replace(hour=5))
             col1, col2, col3 = st.columns(3)
             with col1: st.metric("Current Wind", f"{actual_wind['wind_actual_mw'].iloc[-1] / 1000:.1f} GW" if len(actual_wind) > 0 else "N/A")
             with col2: st.metric("Avg Actual", f"{actual_wind['wind_actual_mw'].mean() / 1000:.1f} GW" if len(actual_wind) > 0 else "N/A")
             with col3: st.metric("Peak Actual", f"{actual_wind['wind_actual_mw'].max() / 1000:.1f} GW" if len(actual_wind) > 0 else "N/A")
-            fig = create_wind_generation_plot(actual_wind, forecast_wind, gas_day_start, gas_day_end)
+            fig = create_wind_generation_plot(actual_wind, forecast_wind, wind_day_start, wind_day_end)
             st.plotly_chart(fig, use_container_width=True, theme=None)
 
     # ── GASSCO TAB ──
