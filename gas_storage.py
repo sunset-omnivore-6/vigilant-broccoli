@@ -16,6 +16,9 @@ from datetime import date, timedelta
 from io import StringIO
 from pathlib import Path
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
@@ -80,8 +83,8 @@ def load_storage_data():
                 try:
                     with open(json_path, 'w') as f:
                         json.dump(data, f, separators=(',', ':'))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to write storage cache: %s", e)
         return data
     data = fetch_from_api(date.today() - timedelta(days=1826), date.today())
     return data if data else {f["name"]: {} for f in FACILITIES}
@@ -124,7 +127,8 @@ def fetch_from_api(from_date, to_date):
                         except (ValueError, TypeError): continue
                         all_data[fac][dt_str] = mcm
                         total_new += 1
-        except Exception: pass
+        except (requests.RequestException, pd.errors.ParserError, ValueError) as e:
+            logger.warning("Failed to fetch storage data chunk %s–%s: %s", start, end, e)
         start = end + timedelta(days=1)
     return all_data if total_new > 0 else None
 
