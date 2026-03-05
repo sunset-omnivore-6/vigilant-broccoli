@@ -45,13 +45,14 @@ st.markdown("""
 
     .header-bar {
         background: linear-gradient(135deg, #1e3a5f 0%, #2c5282 100%);
-        padding: 1rem 2rem; border-radius: 8px; margin: -1rem -1rem 1rem -1rem;
+        padding: 0.4rem 1.5rem; border-radius: 6px; margin: -1rem -1rem 0.5rem -1rem;
         display: flex; justify-content: space-between; align-items: center;
     }
-    .header-bar h1 { margin: 0; font-size: 1.5rem; font-weight: 700; color: white !important; }
-    .header-bar .subtitle { font-size: 0.85rem; color: rgba(255,255,255,0.7); margin-top: 0.2rem; }
-    .header-time { text-align: right; color: rgba(255,255,255,0.85); font-size: 0.85rem; }
-    .header-time strong { font-size: 1.1rem; color: white; }
+    .header-bar h1 { margin: 0; font-size: 1.15rem; font-weight: 700; color: white !important; }
+    .header-bar .subtitle { font-size: 0.7rem; color: rgba(255,255,255,0.6); margin-top: 0.1rem; }
+    .header-time { text-align: right; color: rgba(255,255,255,0.85); font-size: 0.75rem; display: flex; align-items: center; gap: 1rem; }
+    .header-time strong { font-size: 0.9rem; color: white; }
+    .header-time .refresh-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); color: white; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
 
     .stTabs [data-baseweb="tab-list"] { gap: 0; background-color: #131825; padding: 0; border-radius: 8px; border: 1px solid #252D44; }
     .stTabs [data-baseweb="tab"] { height: 48px; padding: 0 28px; background-color: transparent; border-radius: 0; border: none; border-right: 1px solid #252D44; font-weight: 500; font-size: 0.95rem; color: #7A8599; }
@@ -628,6 +629,33 @@ def get_pclp_data():
         return None
 
 
+@st.cache_data(ttl=120)
+def get_entry_point_flows():
+    """Fetch full-day individual entry point flow data from customisable-downloads API."""
+    url = "https://data.nationalgas.com/api/customisable-downloads"
+    today = uk_now().strftime("%Y-%m-%d")
+    payload = {
+        "fromDate": today,
+        "toDate": today,
+        "ids": "562,564,572,570,539,559,549,575,579,582,560,563,576,578,573,544,571,568,589,541,540,577,542,561,543",
+        "isLatest": True,
+        "predefinedDate": "Last 24 Hours"
+    }
+    try:
+        response = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+        response.raise_for_status()
+        result = response.json()
+        rows = result.get("data", {}).get("data", [])
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        df['Timestamp'] = pd.to_datetime(df['dateTime'], unit='ms')
+        return df
+    except (requests.RequestException, KeyError, ValueError) as e:
+        logger.warning("Failed to fetch entry point flows: %s", e)
+        return None
+
+
 def _linepack_poll_interval():
     """Smart polling: fast during h:01–h:10 if this hour's data hasn't arrived."""
     now = uk_now()
@@ -639,7 +667,7 @@ def _linepack_poll_interval():
     return None
 
 
-def render_linepack_section():
+def render_linepack_section(key_suffix=""):
     """Render prominent linepack display at top of gas tab."""
     lp_df = get_linepack_data()
     if lp_df is None or 'Latest linepack' not in lp_df.columns:
@@ -766,7 +794,55 @@ def render_linepack_section():
             unsafe_allow_html=True
         )
     with col_chart:
-        st.plotly_chart(fig, use_container_width=True, theme=None, key="linepack_chart")
+        st.plotly_chart(fig, use_container_width=True, theme=None, key=f"linepack_chart{key_suffix}")
+
+
+def create_stacked_flow_chart(df, categories, chart_title, height=250, chart_key=None):
+    """Create a stacked area chart for multiple flow categories.
+
+    Args:
+        df: DataFrame with Timestamp column + flow columns
+        categories: list of {"name": str, "columns": [str], "color": str}
+        chart_title: str
+        height: int
+        chart_key: optional unique key for st.plotly_chart
+    Returns:
+        Plotly Figure
+    """
+    start = gas_day_start()
+    end = start + timedelta(days=1)
+    now = uk_now().replace(tzinfo=None)
+    fig = go.Figure()
+    for cat in categories:
+        cols = [c for c in cat["columns"] if c in df.columns]
+        if not cols:
+            continue
+        y = df[cols[0]].fillna(0).copy()
+        for c in cols[1:]:
+            y = y + df[c].fillna(0)
+        fig.add_trace(go.Scatter(
+            x=df['Timestamp'], y=y, mode='lines',
+            line=dict(width=0.5, color=cat["color"]),
+            fillcolor=cat["color"], stackgroup='one',
+            name=cat["name"],
+            hovertemplate=f'<b>{cat["name"]}</b>: %{{y:.1f}} mcm<extra></extra>'
+        ))
+    fig.add_vline(
+        x=int(now.timestamp() * 1000), line_color="#E2E8F0", line_width=1.5,
+        annotation_text=f"<b>Now</b>", annotation_position="top",
+        annotation=dict(font=dict(size=10, color='#E2E8F0'), bgcolor="#131825",
+                        bordercolor="#252D44", borderwidth=1)
+    )
+    layout = get_chart_layout(f"<b>{chart_title}</b>", height)
+    layout['xaxis']['range'] = [start, end]
+    layout['xaxis']['tickformat'] = '%H:%M'
+    layout['yaxis']['title'] = dict(text='Flow Rate (mcm)', font=dict(color='#7A8599'))
+    layout['showlegend'] = True
+    layout['legend'] = dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5,
+                            font=dict(size=10, color='#7A8599'), bgcolor='rgba(0,0,0,0)')
+    layout['margin'] = dict(l=50, r=20, t=35, b=60)
+    fig.update_layout(**layout)
+    return fig
 
 
 def create_flow_chart(df, column_name, chart_title, color='#60A5FA', yesterday_df=None):
@@ -860,6 +936,70 @@ def render_gassco_table(df):
     st.dataframe(display_df[cols], use_container_width=True, hide_index=True)
 
 
+def prepare_gas_dataframes(demand_df, supply_df):
+    """Add Timestamp and interval_seconds columns to raw gas API DataFrames."""
+    if 'Storage' in demand_df.columns:
+        demand_df = demand_df.copy()
+        demand_df.rename(columns={'Storage': 'Storage Injection'}, inplace=True)
+    start = gas_day_start()
+    for df_raw in [demand_df, supply_df]:
+        n = len(df_raw)
+        ts = [start + timedelta(minutes=2*i) for i in range(n)]
+        df_raw['Timestamp'] = ts
+        df_raw.sort_values('Timestamp', inplace=True)
+        df_raw.reset_index(drop=True, inplace=True)
+        df_raw['next_time'] = df_raw['Timestamp'].shift(-1).fillna(df_raw['Timestamp'].iloc[-1] + timedelta(minutes=2))
+        df_raw['interval_seconds'] = (df_raw['next_time'] - df_raw['Timestamp']).dt.total_seconds()
+    return demand_df, supply_df
+
+
+# ── Category definitions for Dashboard stacked charts ──
+SUPPLY_CATEGORIES = [
+    {"name": "Beach Terminal", "columns": ["Beach (UKCS/Norway)"], "color": "#60A5FA"},
+    {"name": "Interconnectors", "columns": ["Bacton BBL Import", "Bacton INT Import"], "color": "#A78BFA"},
+    {"name": "Storage Withdrawal", "columns": ["Storage Withdrawal"], "color": "#34D399"},
+    {"name": "LNG", "columns": ["LNG"], "color": "#F59E0B"},
+]
+
+DEMAND_CATEGORIES = [
+    {"name": "CCGT", "columns": ["Power Station"], "color": "#EF4444"},
+    {"name": "LDZ", "columns": ["LDZ Offtake"], "color": "#F59E0B"},
+    {"name": "Industrial", "columns": ["Industrial"], "color": "#FB923C"},
+    {"name": "Interconnectors", "columns": ["Bacton BBL Export", "Bacton INT Export", "Moffat Export"], "color": "#A78BFA"},
+    {"name": "Storage Injection", "columns": ["Storage Injection"], "color": "#34D399"},
+]
+
+TERMINAL_CATEGORIES = [
+    {"name": "Easington Langeled", "columns": ["EASINGTON LANGELED"], "color": "#60A5FA"},
+    {"name": "Easington Dimlington", "columns": ["EASINGTON DIMLINGTON"], "color": "#93C5FD"},
+    {"name": "St Fergus Shell", "columns": ["ST FERGUS SHELL"], "color": "#A78BFA"},
+    {"name": "St Fergus NSMP", "columns": ["ST FERGUS NSMP"], "color": "#C4B5FD"},
+    {"name": "St Fergus Mobil", "columns": ["ST FERGUS MOBIL"], "color": "#DDD6FE"},
+    {"name": "Bacton Perenco", "columns": ["BACTON PERENCO"], "color": "#F472B6"},
+    {"name": "Bacton Seal", "columns": ["BACTON SEAL"], "color": "#F9A8D4"},
+    {"name": "Bacton Shell", "columns": ["BACTON SHELL"], "color": "#FBCFE8"},
+    {"name": "Teesside CATS", "columns": ["TEESSIDE CATS"], "color": "#FB923C"},
+    {"name": "Teesside PX", "columns": ["TEESSIDE PX"], "color": "#FDBA74"},
+    {"name": "Theddlethorpe", "columns": ["THEDDLETHORPE"], "color": "#7A8599"},
+]
+
+LNG_CATEGORIES = [
+    {"name": "South Hook", "columns": ["MILFORD HAVEN - SOUTH HOOK"], "color": "#F59E0B"},
+    {"name": "Dragon", "columns": ["MILFORD HAVEN - DRAGON"], "color": "#FBBF24"},
+    {"name": "Grain NTS 2", "columns": ["GRAIN NTS 2"], "color": "#60A5FA"},
+    {"name": "Grain NTS 1", "columns": ["GRAIN NTS 1"], "color": "#93C5FD"},
+]
+
+STORAGE_CATEGORIES = [
+    {"name": "Stublach", "columns": ["STUBLACH"], "color": "#3B82F6"},
+    {"name": "Rough", "columns": ["EASINGTON ROUGH ST"], "color": "#F59E0B"},
+    {"name": "Aldbrough", "columns": ["ALDBROUGH"], "color": "#F472B6"},
+    {"name": "Holford", "columns": ["HOLFORD"], "color": "#FB923C"},
+    {"name": "Hornsea", "columns": ["HORNSEA"], "color": "#EF4444"},
+    {"name": "Hill Top", "columns": ["HILLTOP"], "color": "#34D399"},
+]
+
+
 # ============================================================================
 # MAIN APPLICATION
 # ============================================================================
@@ -868,16 +1008,16 @@ def main():
     from streamlit_autorefresh import st_autorefresh
     st_autorefresh(interval=180_000, limit=None, key="dashboard_autorefresh")
 
+    now = uk_now()
+    gas_day_label = now.strftime("%d %b") if now.hour >= 5 else (now - timedelta(days=1)).strftime("%d %b")
     st.markdown(f'''
     <div class="header-bar">
         <div>
             <h1>\u26a1 UK Energy Market Dashboard</h1>
-            <div class="subtitle">Real-time monitoring of gas and electricity markets</div>
+            <div class="subtitle">Real-time gas and electricity monitoring</div>
         </div>
         <div class="header-time">
-            <strong>{uk_now().strftime("%H:%M:%S")}</strong><br>
-            {uk_now().strftime("%d %B %Y")}<br>
-            Gas Day: {uk_now().strftime("%d %b") if uk_now().hour >= 5 else (uk_now() - timedelta(days=1)).strftime("%d %b")}
+            <span><strong>{now.strftime("%H:%M:%S")}</strong> &middot; {now.strftime("%d %b %Y")} &middot; Gas Day: {gas_day_label}</span>
         </div>
     </div>
     ''', unsafe_allow_html=True)
@@ -885,19 +1025,127 @@ def main():
 
     col1, col2, col3 = st.columns([8, 1, 1])
     with col3:
-        if st.button("\U0001f504 Refresh"):
+        if st.button("\U0001f504 Refresh", key="main_refresh"):
             st.cache_data.clear()
             st.rerun()
 
-    tab_gas, tab_elexon, tab_gassco, tab_lng = st.tabs([
-        "\U0001f525 National Gas", "\u26a1 Electricity (Elexon)", "\U0001f527 GASSCO Outages", "\U0001f6a2 LNG Vessels"
+    tab_dash, tab_gas, tab_elexon, tab_gassco, tab_lng = st.tabs([
+        "\U0001f4ca Dashboard", "\U0001f525 National Gas", "\u26a1 Electricity", "\U0001f527 GASSCO", "\U0001f6a2 LNG"
     ])
+
+    # ── DASHBOARD TAB ──
+    with tab_dash:
+        @st.fragment(run_every=_linepack_poll_interval())
+        def _dash_linepack_fragment():
+            render_linepack_section(key_suffix="_dash")
+        _dash_linepack_fragment()
+
+        # Fetch supply/demand category data (shared cache with National Gas tab)
+        dash_demand_df, dash_supply_df = fetch_parallel(
+            (get_gas_data, ("demandCategoryGraph",)),
+            (get_gas_data, ("supplyCategoryGraph",)),
+        )
+        if dash_demand_df is not None and dash_supply_df is not None:
+            dash_demand_df, dash_supply_df = prepare_gas_dataframes(dash_demand_df.copy(), dash_supply_df.copy())
+
+            # Supply & Demand stacked area charts side by side
+            col_supply, col_demand = st.columns(2)
+            with col_supply:
+                fig_supply = create_stacked_flow_chart(dash_supply_df, SUPPLY_CATEGORIES, "Supply Flows", height=280)
+                st.plotly_chart(fig_supply, use_container_width=True, theme=None, key="dash_supply")
+            with col_demand:
+                fig_demand = create_stacked_flow_chart(dash_demand_df, DEMAND_CATEGORIES, "Demand Flows", height=280)
+                st.plotly_chart(fig_demand, use_container_width=True, theme=None, key="dash_demand")
+        else:
+            dash_supply_df = None
+
+        # Fetch individual entry point flows
+        entry_df = get_entry_point_flows()
+        if entry_df is not None and len(entry_df) > 0:
+            record_fetch("entry_points")
+            # Filter to current gas day
+            gd_start = gas_day_start()
+            entry_df = entry_df[entry_df['Timestamp'] >= gd_start].copy()
+
+            if len(entry_df) > 0:
+                # Terminal flows
+                fig_terminals = create_stacked_flow_chart(entry_df, TERMINAL_CATEGORIES, "Terminal Entry Flows", height=280)
+                st.plotly_chart(fig_terminals, use_container_width=True, theme=None, key="dash_terminals")
+
+                # LNG flows
+                fig_lng = create_stacked_flow_chart(entry_df, LNG_CATEGORIES, "LNG Entry Flows", height=280)
+                st.plotly_chart(fig_lng, use_container_width=True, theme=None, key="dash_lng")
+
+                # Storage withdrawal — filter to only sites that have flowed
+                active_storage = []
+                for cat in STORAGE_CATEGORIES:
+                    col = cat["columns"][0]
+                    if col in entry_df.columns and entry_df[col].fillna(0).sum() > 0:
+                        active_storage.append(cat)
+                # Calculate "Other (Hatfield/Humbly)" if aggregate > sum of metered
+                if dash_supply_df is not None and "Storage Withdrawal" in dash_supply_df.columns:
+                    metered_cols = [c["columns"][0] for c in STORAGE_CATEGORIES if c["columns"][0] in entry_df.columns]
+                    metered_sum = entry_df[metered_cols].fillna(0).sum(axis=1)
+                    # Align aggregate storage withdrawal to entry_df timestamps
+                    # Use the aggregate total from supply data as reference
+                    agg_sw = dash_supply_df.set_index('Timestamp')['Storage Withdrawal'].reindex(entry_df['Timestamp'], method='nearest').fillna(0).values
+                    other = agg_sw - metered_sum.values
+                    other = np.maximum(other, 0)
+                    if other.sum() > 0.5:
+                        entry_df = entry_df.copy()
+                        entry_df['OTHER_STORAGE'] = other
+                        active_storage.append({"name": "Other (Hatfield/Humbly)", "columns": ["OTHER_STORAGE"], "color": "#7A8599"})
+
+                if active_storage:
+                    fig_storage = create_stacked_flow_chart(entry_df, active_storage, "Storage Withdrawal Flows", height=280)
+                    st.plotly_chart(fig_storage, use_container_width=True, theme=None, key="dash_storage")
+                else:
+                    st.markdown('<div style="color:#7A8599;text-align:center;padding:1rem;">No storage withdrawal currently flowing.</div>', unsafe_allow_html=True)
+
+                # Rate change indicators
+                if dash_supply_df is not None:
+                    now_naive = uk_now().replace(tzinfo=None)
+                    elapsed_pct = max(0, min(1, (now_naive - gd_start).total_seconds() / 86400))
+                    comparisons = []
+                    checks = [
+                        ("Beach Terminal", ["Beach (UKCS/Norway)"], TERMINAL_CATEGORIES),
+                        ("LNG", ["LNG"], LNG_CATEGORIES),
+                        ("Storage Withdrawal", ["Storage Withdrawal"], active_storage if active_storage else STORAGE_CATEGORIES),
+                    ]
+                    for label, agg_cols, detail_cats in checks:
+                        # Aggregate total from supply category data
+                        agg_val = 0
+                        for ac in agg_cols:
+                            if ac in dash_supply_df.columns:
+                                agg_val += np.average(dash_supply_df[ac].fillna(0), weights=dash_supply_df['interval_seconds']) * elapsed_pct
+                        # Sum of individual entries from customisable-downloads
+                        detail_val = 0
+                        for dc in detail_cats:
+                            for col in dc["columns"]:
+                                if col in entry_df.columns:
+                                    # Simple average × elapsed for 2-min data
+                                    vals = entry_df[col].fillna(0)
+                                    detail_val += vals.mean() * elapsed_pct
+                        if agg_val > 0.5:
+                            diff_pct = ((detail_val - agg_val) / agg_val) * 100
+                            if abs(diff_pct) > 2:
+                                color = "#F59E0B"
+                                comparisons.append(f'<span style="color:{color};">{label}: aggregate {agg_val:.1f} mcm vs entries {detail_val:.1f} mcm ({diff_pct:+.1f}%)</span>')
+                    if comparisons:
+                        st.markdown(
+                            f'<div style="background:#131825;border:1px solid #252D44;border-left:4px solid #F59E0B;'
+                            f'border-radius:0 6px 6px 0;padding:8px 12px;margin-top:4px;color:#7A8599;font-size:0.8rem;">'
+                            f'<strong style="color:#F59E0B;">Rate divergence:</strong> ' + ' &middot; '.join(comparisons) + '</div>',
+                            unsafe_allow_html=True
+                        )
+        else:
+            st.info("Entry point flow data unavailable.")
 
     # ── NATIONAL GAS TAB ──
     with tab_gas:
         @st.fragment(run_every=_linepack_poll_interval())
         def _linepack_fragment():
-            render_linepack_section()
+            render_linepack_section(key_suffix="_gas")
         _linepack_fragment()
 
         ng_view = st.radio("Select View", ["Flow Table", "Supply Charts", "Demand Charts", "Gas Storage"], horizontal=True, key="ng_view", label_visibility="collapsed")
@@ -914,21 +1162,7 @@ def main():
             if supply_df is not None:
                 record_fetch("gas_supply")
             if demand_df is not None and supply_df is not None:
-                if 'Storage' in demand_df.columns:
-                    demand_df = demand_df.copy(); demand_df.rename(columns={'Storage': 'Storage Injection'}, inplace=True)
-                n = len(demand_df)
-                start = gas_day_start()
-                ts = [start + timedelta(minutes=2*i) for i in range(n)]
-                demand_df = demand_df.copy(); demand_df['Timestamp'] = ts
-                demand_df = demand_df.sort_values('Timestamp').reset_index(drop=True)
-                demand_df['next_time'] = demand_df['Timestamp'].shift(-1).fillna(demand_df['Timestamp'].iloc[-1] + timedelta(minutes=2))
-                demand_df['interval_seconds'] = (demand_df['next_time'] - demand_df['Timestamp']).dt.total_seconds()
-                n_s = len(supply_df)
-                ts_s = [start + timedelta(minutes=2*i) for i in range(n_s)]
-                supply_df = supply_df.copy(); supply_df['Timestamp'] = ts_s
-                supply_df = supply_df.sort_values('Timestamp').reset_index(drop=True)
-                supply_df['next_time'] = supply_df['Timestamp'].shift(-1).fillna(supply_df['Timestamp'].iloc[-1] + timedelta(minutes=2))
-                supply_df['interval_seconds'] = (supply_df['next_time'] - supply_df['Timestamp']).dt.total_seconds()
+                demand_df, supply_df = prepare_gas_dataframes(demand_df.copy(), supply_df.copy())
 
                 # Cache current data; roll over to "yesterday" at gas day boundary
                 current_gas_date = gas_day_start().date()
