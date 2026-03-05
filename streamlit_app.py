@@ -1026,7 +1026,7 @@ NOM_PUBOBJ_IDS = (
     "PUBOBJ1120,PUBOBJ1122,PUBOBJ1121,PUBOBJ1123,PUBOBJ1124,PUBOBJ1125,"
     "PUBOBJ1112,PUBOBJ1135,PUBOBJ1117,PUBOBJ1118,PUBOBJ1119,PUBOBJ1141,"
     "PUBOBJ1126,PUBOBJ1094,PUBOBJ1106,PUBOBJ1597,PUBOBJ1596,PUBOBJ1093,"
-    "PUBOBJ1153,PUBOBJ1157"
+    "PUBOBJ1153,PUBOBJ1157,PUBOBJ1160"
 )
 
 LNG_SUBTERMINALS = {
@@ -2004,7 +2004,10 @@ def main():
             st.info("Interconnector flow data unavailable.")
 
     # ── Demand category chart helper ──
-    def _render_demand_tab(tab_container, label, col_name, nom_name, color, title, chart_key):
+    def _render_demand_tab(tab_container, label, col_name, nom_names, color, title, chart_key):
+        """nom_names: str or list of str — if list, prevailing and historic values are summed."""
+        if isinstance(nom_names, str):
+            nom_names = [nom_names]
         with tab_container:
             dem_df = get_gas_data("demandCategoryGraph")
             dem_gd_start = gas_day_start()
@@ -2021,8 +2024,21 @@ def main():
                     dem_eod = dem_avg * (dem_elapsed / 86400) + dem_flow * (dem_remaining / 86400) if dem_elapsed > 0 else 0
                     dem_prevailing = get_prevailing_nominations()
                     dem_historic = get_historic_nominations()
-                    dem_nom = dem_prevailing.get(nom_name, 0)
-                    dem_hist = dem_historic.get(nom_name, [])
+                    dem_nom = sum(dem_prevailing.get(n, 0) for n in nom_names)
+                    # Merge historic series: align by timestamp and sum values
+                    all_hist = [dem_historic.get(n, []) for n in nom_names]
+                    non_empty = [h for h in all_hist if h]
+                    if len(non_empty) == 1:
+                        dem_hist = non_empty[0]
+                    elif len(non_empty) > 1:
+                        # Collect all unique timestamps, sum values at each
+                        ts_map = {}
+                        for series in non_empty:
+                            for ts, val in series:
+                                ts_map[ts] = ts_map.get(ts, 0) + val
+                        dem_hist = sorted(ts_map.items(), key=lambda x: x[0])
+                    else:
+                        dem_hist = []
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(
                         x=dem_df['Timestamp'], y=dem_df[col_name].fillna(0),
@@ -2114,7 +2130,7 @@ def main():
     _render_demand_tab(tab_ccgt, "CCGT", "Power Station", "NTS Powerstation Total", "#EF4444", "CCGT / Power Station Gas Demand", "ccgt_chart")
 
     # ── LDZ TAB ──
-    _render_demand_tab(tab_ldz, "LDZ", "LDZ Offtake", "LDZ Direct Total", "#F59E0B", "LDZ Offtake Gas Demand", "ldz_chart")
+    _render_demand_tab(tab_ldz, "LDZ", "LDZ Offtake", ["LDZ Direct Total", "Non Daily Meters Total"], "#F59E0B", "LDZ Offtake Gas Demand", "ldz_chart")
 
 
 if __name__ == "__main__":
